@@ -51,7 +51,8 @@ def generate_expert_traj(model, save_path=None, env=None, n_timesteps=0,
             isinstance(env.observation_space, spaces.Discrete)), "Observation space type not supported"
 
     assert (isinstance(env.action_space, spaces.Box) or
-            isinstance(env.action_space, spaces.Discrete)), "Action space type not supported"
+            isinstance(env.action_space, spaces.Discrete) or
+            isinstance(env.action_space, spaces.MultiDiscrete)), "Action space type not supported"
 
     # Check if we need to record images
     obs_space = env.observation_space
@@ -156,6 +157,8 @@ def generate_expert_traj(model, save_path=None, env=None, n_timesteps=0,
         actions = np.concatenate(actions).reshape((-1,) + env.action_space.shape)
     elif isinstance(env.action_space, spaces.Discrete):
         actions = np.array(actions).reshape((-1, 1))
+    elif isinstance(env.action_space, spaces.MultiDiscrete):
+        actions = np.concatenate(actions).reshape((-1, len(env.action_space.nvec)))
 
     rewards = np.array(rewards)
     episode_starts = np.array(episode_starts[:-1])

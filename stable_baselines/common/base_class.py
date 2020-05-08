@@ -292,7 +292,7 @@ class BaseRLModel(ABC):
         Pretrain a model using behavior cloning:
         supervised learning given an expert dataset.
 
-        NOTE: only Box and Discrete spaces are supported for now.
+        NOTE: only Box, Discrete and MultiDiscrete spaces are supported for now.
 
         :param dataset: (ExpertDataset) Dataset manager
         :param n_epochs: (int) Number of iterations on the training set
@@ -304,8 +304,11 @@ class BaseRLModel(ABC):
         """
         continuous_actions = isinstance(self.action_space, gym.spaces.Box)
         discrete_actions = isinstance(self.action_space, gym.spaces.Discrete)
+        multidiscrete_actions = isinstance(self.action_space, gym.spaces.MultiDiscrete)
 
-        assert discrete_actions or continuous_actions, 'Only Discrete and Box action spaces are supported'
+        assert (discrete_actions or
+                continuous_actions or
+                multidiscrete_actions, 'Only Discrete and Box action spaces are supported')
 
         # Validate the model every 10% of the total number of iteration
         if val_interval is None:
@@ -320,7 +323,7 @@ class BaseRLModel(ABC):
                 if continuous_actions:
                     obs_ph, actions_ph, deterministic_actions_ph = self._get_pretrain_placeholders()
                     loss = tf.reduce_mean(tf.square(actions_ph - deterministic_actions_ph))
-                else:
+                elif discrete_actions:
                     obs_ph, actions_ph, actions_logits_ph = self._get_pretrain_placeholders()
                     # actions_ph has a shape if (n_batch,), we reshape it to (n_batch, 1)
                     # so no additional changes is needed in the dataloader
@@ -331,6 +334,25 @@ class BaseRLModel(ABC):
                         labels=tf.stop_gradient(one_hot_actions)
                     )
                     loss = tf.reduce_mean(loss)
+                else:
+                    loss = []
+                    n_actions = self.action_space.nvec.size
+                    action_indices = [0] + np.cumsum(self.action_space.nvec).tolist()
+                    obs_ph, actions_ph, actions_logits_ph = self._get_pretrain_placeholders()
+
+                    action_phs = [actions_ph[:, i] for i in range(n_actions)]
+                    action_logits_phs = [actions_logits_ph[:, action_indices[i]:action_indices[i+1]] for i in range(n_actions)]
+
+                    for action_ph, action_logits_ph in zip(action_phs, action_logits_phs):
+                        loss_for_subspace = tf.nn.sparse_softmax_cross_entropy_with_logits(
+                            logits=action_logits_ph,
+                            labels=tf.stop_gradient(action_ph)
+                        )
+                        loss_for_subspace = tf.reduce_mean(loss_for_subspace)
+                        loss.append(loss_for_subspace)
+
+                    loss = tf.math.add_n(loss)
+
                 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate, epsilon=adam_epsilon)
                 optim_op = optimizer.minimize(loss, var_list=self.params)
 
